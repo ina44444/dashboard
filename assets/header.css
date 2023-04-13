@@ -1,0 +1,9 @@
+.app-header {
+    height: 200px;
+    background-color: rgb(247, 247, 249);
+    font-style: normal;
+    font-weight: normal;
+    font-family: Verdana, Geneva, Tahoma, sans-serif;
+    
+    border-bottom: thin rgb(154, 157, 182) solid;
+}
