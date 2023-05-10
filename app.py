@@ -10,10 +10,23 @@ import plotly.graph_objects as go
 from datetime import datetime
 from filtering import filtered_data
 from flask import Flask
+import re
 
 # Import data
 df = pd.read_excel("Processed_data.xlsx")
-# df_row = pd.read_excel("Выгрузка_кардиопациентов_из_FTP_2022_2023.xlsx")
+df_row = pd.read_excel("Выгрузка_кардиопациентов_из_FTP_2022_2023.xlsx")
+df_row.columns = ['id', 'downloadDate', 'hospitalName','hospitalOID', 'birthDate', 'diagnosis', 
+             'dischargeDate', 'polyclinicName', 'policlinicOID', 'sex', 'coronaryArtery', 
+             'angioplasty', 'catheterAblation','RCV', 'MKB_E10_E11', 'LDLcholesterol', 
+            'glucoseConcentration', 'LipidLoweringTherapy' ]
+df_row = df_row.fillna({'MKB_E10_E11': 0})
+df_row = df_row.astype({'MKB_E10_E11': 'str'})
+df_row['MKB_E10_E11'] = df_row['MKB_E10_E11'].str.replace(r'^[Нн].*', '0', regex=True)
+search_func = lambda x: x if (re.search(r"^[ЕеEe].*", x) or x == '0') else 'fault'
+df_row['MKB_E10_E11'] = df_row['MKB_E10_E11'].map(search_func)
+err_2 = df_row.query('MKB_E10_E11 == "fault"') 
+# err_2.groupby('hospitalName', as_index=False).agg({'id': 'count'}) \
+#     .sort_values('id', ascending=False)
 # Initialize the app
 server = Flask(__name__)
 app = Dash(__name__, server=server, external_stylesheets=["assets/home_style.css", dbc.themes.COSMO])
@@ -24,6 +37,7 @@ medical_indication_frame = pd.DataFrame(['coronaryArtery','angioplasty','cathete
 medical_indication_frame.columns = ['indication']
 triada_file = pd.read_excel("Triada_table.xlsx")
 dislek_file = pd.read_excel("dislek_dataset.xlsx")
+hospital_dict = df["hospitalName"].unique()
 
 # Design settings
 CHARTS_TEMPLATE = go.layout.Template(
@@ -47,15 +61,23 @@ hospital_filter_for_dislek = dcc.Dropdown(
     id= "hospital-filter_dislek",
     options=[{'label':'Стационары','value':'hospitalName'},
             {'label':'Поликлиники','value':'polyclinicName'}],
-    value='hospitalName'
-    
+    value='hospitalName' 
 )
 hospital_filter_for_triada = dcc.Dropdown(
     id= "hospital-filter_triada",
     options=[{'label':'Стационары','value':'hospitalName'},
             {'label':'Поликлиники','value':'polyclinicName'}],
     value='hospitalName'
-    
+)
+
+error_filter = dcc.Dropdown(
+    id= "error-filter",
+    options=[{'label':'Пропущенные значения/опечатки в дате','value':'date_err'},
+            {'label':'Пропущенные значения/Опечатки в основном диагнозе','value':'main_diagnos'},
+            {'label':'Опечатки в диагнозе Е10-Е11','value':'e10_e11'},
+            {'label':'Пропущенные значения пола','value':'err_gender'},
+            ],
+    value='e10_e11'
 )
 
 # Markup elements
@@ -379,6 +401,54 @@ dislek = dbc.Card([
     ],
     )
 ])
+
+error_types = dbc.Card([
+    dbc.CardBody([
+        dbc.Row([
+            dbc.Col([
+                html.H4("Отчет об ошибочных значениях в передаваемых данных за выбранный период",
+                           style={'font-size': 20,
+                                  'text-align': 'left',
+
+                                  },
+                           ),
+            ], width=8),
+            dbc.Col([
+                html.Div(error_filter,
+                           style={'font-size': 20,
+                                  'text-align': 'left',
+
+                                  },
+                           ),
+            ], width=4)
+        ]),
+        dbc.Row([
+            dbc.Col([
+                dcc.Graph(id='error-graph')
+        ])
+    ])
+    ],
+    )
+])
+empty_hospital = dbc.Card([
+    dbc.CardBody([
+        dbc.Row([
+            dbc.Col([
+                html.H4("Перечень стационаров, не передававших записи за выбранный период:",
+                           style={'font-size': 20,
+                                  'text-align': 'left',
+
+                                  },
+                           ),
+            ]),
+        ]),
+         dbc.Row([
+                dbc.Col(html.H4("ФГБУ ВЦЭРМ ИМ. А.М. Никифорова МЧС России",style={'text-align': 'center', 'margin-right': '8px',}))
+            ])
+    
+    ],
+    )
+])
 #_________TABS_________________
 tab1_content = [dbc.Row([
         dbc.Col([
@@ -420,9 +490,13 @@ tab1_content = [dbc.Row([
 tab2_content = [
     dbc.Row([
             dbc.Col([
-                medical_term
+                error_types
             ],
-            width={'size':10})
+            width={'size':7}),
+            dbc.Col([
+                empty_hospital
+            ],
+            width={'size': 5})
         ],
         style={'margin-bottom':bottom_dist}),
 ]
@@ -529,8 +603,8 @@ def update_age_gender_diagram(start_date, end_date):
     first = 0
     second = 5
     while second < 120:
-        male_ages.append(len(chart_data4[(chart_data4["gender"]=="М") &( chart_data4["Age"] > first) &( chart_data4["Age"] <= second)]))
-        female_ages.append(len(chart_data4[(chart_data4["gender"]=="Ж") &( chart_data4["Age"] > first) &( chart_data4["Age"] <= second)]))
+        male_ages.append(len(chart_data4[(chart_data4["sex"]=="М") &( chart_data4["Age"] > first) &( chart_data4["Age"] <= second)]))
+        female_ages.append(len(chart_data4[(chart_data4["sex"]=="Ж") &( chart_data4["Age"] > first) &( chart_data4["Age"] <= second)]))
         first += 5
         second += 5
 
@@ -554,28 +628,28 @@ def update_age_gender_diagram(start_date, end_date):
                   yaxis_title="Количество пациентов",barmode='group', xaxis_tickangle=-45,legend_y = 1.1, legend_orientation='h')
     return fig4
 
-#medical_term-chart
-@app.callback(
-    Output(component_id='medical_term-chart', component_property='figure'),
-    [
-        Input(component_id='date-filter', component_property='start_date'),
-        Input(component_id='date-filter', component_property='end_date'),
-    ]
-)
-def update_medical_term(start_date, end_date):
-    chart_data6 =  filtered_data(start_date, end_date, df)   
-    lst= []
-    df_colums = ['coronaryArtery', 'angioplasty', 'catheterAblation', 'RCV',
-       'MKB_E10_E11', 'LDLcholesterol', 'glucoseConcentration',
-       'LipidLoweringTherapy']
-    for k in df_colums:
-        lst.append(chart_data6[k].sum())
-    medical_indication_frame['number'] = lst
+# #medical_term-chart
+# @app.callback(
+#     Output(component_id='medical_term-chart', component_property='figure'),
+#     [
+#         Input(component_id='date-filter', component_property='start_date'),
+#         Input(component_id='date-filter', component_property='end_date'),
+#     ]
+# )
+# def update_medical_term(start_date, end_date):
+#     chart_data6 =  filtered_data(start_date, end_date, df)   
+#     lst= []
+#     df_colums = ['coronaryArtery', 'angioplasty', 'catheterAblation', 'RCV',
+#        'MKB_E10_E11', 'LDLcholesterol', 'glucoseConcentration',
+#        'LipidLoweringTherapy']
+#     for k in df_colums:
+#         lst.append(chart_data6[k].sum())
+#     medical_indication_frame['number'] = lst
    
-    f6 = px.bar(medical_indication_frame, x = medical_indication_frame['indication'], y = medical_indication_frame['number'], color_discrete_sequence=px.colors.sequential.Darkmint_r)
-    f6.update_layout(template=CHARTS_TEMPLATE, xaxis_title="Показания",
-                  yaxis_title="Количество пациентов")
-    return f6
+#     f6 = px.bar(medical_indication_frame, x = medical_indication_frame['indication'], y = medical_indication_frame['number'], color_discrete_sequence=px.colors.sequential.Darkmint_r)
+#     f6.update_layout(template=CHARTS_TEMPLATE, xaxis_title="Показания",
+#                   yaxis_title="Количество пациентов")
+#     return f6
 
 #indicator 1
 @app.callback(
@@ -661,7 +735,7 @@ def update_sixth_indicator(start_date, end_date):
     # chart_data7 =  filtered_data(start_date, end_date, df)
     # third_factoid = str(len(chart_data7["polyclinicName"].unique()))
 
-    return "0"
+    return "5"
 
 #dislek
 @app.callback(
@@ -682,6 +756,42 @@ def update_dislek(start_date, end_date, value):
                   template=CHARTS_TEMPLATE, title_pad_b=0)
     dislek_fig.update_yaxes(title="Наименование учреждения", automargin=True)
     return dislek_fig
+#errors
+@app.callback(
+    Output(component_id='error-graph', component_property='figure'),
+    [
+        Input(component_id='date-filter', component_property='start_date'),
+        Input(component_id='date-filter', component_property='end_date'),
+        Input(component_id='error-filter', component_property='value'),
+    ]
+)
+def update_dislek(start_date, end_date, value):
+    row_data = filtered_data(start_date, end_date, err_2)
+
+    err2_fig = px.histogram(row_data,  x= "hospitalName", color_discrete_sequence=px.colors.sequential.Darkmint_r).update_yaxes(categoryorder="total descending")
+    err2_fig.update_layout(xaxis_title="Наименование учреждения",
+                  template=CHARTS_TEMPLATE)
+    err2_fig.update_yaxes(title="Количество записей с ошибкой выбранного типа", automargin=True)
+    return err2_fig
+
+#errors2
+@app.callback(
+    Output(component_id='error-table', component_property='children'),
+    [
+        Input(component_id='date-filter', component_property='start_date'),
+        Input(component_id='date-filter', component_property='end_date'),
+        # Input(component_id='error-filter', component_property='value'),
+    ]
+)
+def update_dislek(start_date, end_date):
+    uni_list = []
+    uniq_data = filtered_data(start_date, end_date, df_row)
+    uni = uniq_data["hospitalName"].unique()
+    for i in uni:
+        if i not in hospital_dict:
+            uni_list.append(i)
+    
+    return uni_list
 
 # LAYOUT
 app.layout = html.Div([
