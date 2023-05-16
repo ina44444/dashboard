@@ -10,3 +10,11 @@ h1, H2, h3, h4, h5, h6 {
   font-style: lighter;
   color: #111139;
 }
+
+.scroll
+{
+width:80%;
+height:400px;
+overflow:scroll;
+float: left;
+}
